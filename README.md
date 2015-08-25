@@ -50,5 +50,10 @@ In addition to the standard BINARY and NOCASE collation methods, quill supports 
 ## Throwing
 Many Quill methods throw errors.  The two most common errors are statement compilation and binding the wrong number of arguments.  If statements and parameters are not generated at runtime then `try!` can be used to ignore errors.
 
+## Threading
+sqlite3 is sort of thread safe, and Quill does not enhance thread safety.  For best results, use a dispatch queue to serialize all access to a single Connection instance.  Otherwise, use a separate Connection instance for each thread.  Sharing a single Connection instance across multiple threads is not recommended.
+
 ## Shortcomings
 Quill does not currently support virtual tables, custom functions or collations, hooks or other callbacks, iterating over columns within a row, or help with building complex statements.
+
+
