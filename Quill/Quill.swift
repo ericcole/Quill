@@ -44,6 +44,8 @@ public enum QueryValue : Int32 {
 
 //	MARK: QueryRow
 
+public protocol BinaryRepresentable {}
+
 public protocol QueryRow {
 	/** number of columns in select results **/
 	var columnCount:Int { get }
@@ -52,20 +54,20 @@ public protocol QueryRow {
 	
 	func columnType( column:Int ) -> QueryValue
 	func columnIsNull( column:Int ) -> Bool
-	func columnBooleanValue( column:Int ) -> Bool
-	func columnIntegerValue( column:Int ) -> Int
-	func columnLongValue( column:Int ) -> Int64
-	func columnDoubleValue( column:Int ) -> Double
-	func columnStringValue( column:Int ) -> NSString?
-	func columnDataValue( column:Int ) -> NSData?
+	func columnBoolean( column:Int ) -> Bool
+	func columnInteger( column:Int ) -> Int
+	func columnLong( column:Int ) -> Int64
+	func columnDouble( column:Int ) -> Double
+	func columnString( column:Int ) -> String?
+	func columnData( column:Int ) -> NSData?
 	func columnValue<T>( column:Int ) -> T?
-	func columnObject( column:Int, pool:NSMutableSet, null:AnyObject ) -> AnyObject
-	func columnBinaryRepresentableValue<T>( column:Int ) -> [T]?
+	func columnObject( column:Int, null:AnyObject, pool:NSMutableSet? ) -> AnyObject
+	func columnArray<T where T:BinaryRepresentable>( column:Int ) -> [T]
 	
 	subscript( column:Int ) -> Bool { get }
 	subscript( column:Int ) -> Int64 { get }
 	subscript( column:Int ) -> Double { get }
-	subscript( column:Int ) -> NSString? { get }
+	subscript( column:Int ) -> String? { get }
 	subscript( column:Int ) -> NSData? { get }
 }
 
@@ -89,13 +91,13 @@ public struct Error : ErrorType, CustomStringConvertible {
 //	MARK: -
 
 public class Connection {
-	private var connection:COpaquePointer = nil
+	private var connection:COpaquePointer = nil	//	struct sqlite3 *
 	
 	//	MARK: Initialization
 	
 	public init() {}
 	public init( location:String, immutable:Bool = false ) throws { try openThrows( location, immutable:immutable ) }
-	public init( connection:COpaquePointer ) { self.connection = connection; prepare() }
+	public init( connection:COpaquePointer ) { self.connection = connection; prepareConnection() }
 	deinit { if connection != nil { sqlite3_close( connection ) } }
 	
 	//	MARK: Statements
@@ -112,6 +114,7 @@ public class Connection {
 	public func update( sql:String, _ bind:Bindable?... ) throws -> Int { return try prepareStatement( sql, bind:bind ).executeUpdate() }
 	public func update( sql:String, bind:[String:Bindable] ) throws -> Int { return try prepareStatement( sql, bind:bind ).executeUpdate() }
 	
+	public func select( sql:String, _ bind:Bindable?... ) throws -> Statement { return try prepareStatement( sql ).with( bind ) }
 	public func select<T>( sql:String, transform:(QueryRow) -> T, _ bind:Bindable?... ) throws -> [T] { return try prepareStatement( sql, bind:bind ).map( transform ) }
 	public func filter<T>( sql:String, transform:(QueryRow) -> T?, _ bind:Bindable?... ) throws -> [T] { return try prepareStatement( sql, bind:bind ).filter( transform ) }
 	public func gather( sql:String, _ bind:Bindable?... ) throws -> (columns:[[AnyObject]],names:[String]) { let s = try prepareStatement( sql, bind:bind ); return try (s.columnMajorResults(),s.columnNames) }
@@ -171,7 +174,7 @@ public class Connection {
 		}
 		
 		if nil != connection {
-			prepare()
+			prepareConnection()
 		}
 		
 		return (status,string)
@@ -200,7 +203,7 @@ public class Connection {
 		return result
 	}
 	
-	private func prepare() {
+	private func prepareConnection() {
 		prepareCollation()
 	}
 	
@@ -578,50 +581,50 @@ public class Statement {
 		return nil == sqlite3_column_text( statement, Int32(column) )
 	}
 	
-	public func columnBooleanValue( column:Int ) -> Bool {
+	public func columnBoolean( column:Int ) -> Bool {
 		return sqlite3_column_int( statement, Int32(column) ) != 0
 	}
 	
-	public func columnIntegerValue( column:Int ) -> Int {
+	public func columnInteger( column:Int ) -> Int {
 		return Int(sqlite3_column_int64( statement, Int32(column) ))
 	}
 	
-	public func columnLongValue( column:Int ) -> Int64 {
+	public func columnLong( column:Int ) -> Int64 {
 		return sqlite3_column_int64( statement, Int32(column) )
 	}
 	
-	public func columnDoubleValue( column:Int ) -> Double {
+	public func columnDouble( column:Int ) -> Double {
 		return sqlite3_column_double( statement, Int32(column) )
 	}
 	
-	public func columnNullableBooleanValue( column:Int ) -> Bool? {
-		return columnIsNull( column ) ? nil : columnBooleanValue( column )
+	public func nullableBoolean( column:Int ) -> Bool? {
+		return columnIsNull( column ) ? nil : columnBoolean( column )
 	}
 	
-	public func columnNullableLongValue( column:Int ) -> Int64? {
-		return columnIsNull( column ) ? nil : columnLongValue( column )
+	public func nullableLong( column:Int ) -> Int64? {
+		return columnIsNull( column ) ? nil : columnLong( column )
 	}
 	
-	public func columnNullableDoubleValue( column:Int ) -> Double? {
-		return columnIsNull( column ) ? nil : columnDoubleValue( column )
+	public func nullableDouble( column:Int ) -> Double? {
+		return columnIsNull( column ) ? nil : columnDouble( column )
 	}
 	
-	public func columnStringValue( column:Int, utf16:Bool ) -> String? {
+	public func columnString( column:Int ) -> String? {
 		let order = Int32(column)
+		let utf8 = sqlite3_column_text( statement, order )
 		
-		if utf16 {
-			let utf16 = sqlite3_column_text16( statement, order )
-			let length = sqlite3_column_bytes( statement, order )
-			
-			return ( nil == utf16 ) ? nil : String( utf16CodeUnits:UnsafePointer<UInt16>(utf16), count:Int(length)/sizeof(UInt16) )
-		} else {
-			let utf8 = sqlite3_column_text( statement, order )
-			
-			return ( nil == utf8 ) ? nil : String( UTF8String:UnsafePointer<Int8>(utf8) )
-		}
+		return ( nil == utf8 ) ? nil : String( UTF8String:UnsafePointer<Int8>(utf8) )
+	}
+		
+	public func columnString16( column:Int ) -> String? {
+		let order = Int32(column)
+		let utf16 = sqlite3_column_text16( statement, order )
+		let length = sqlite3_column_bytes( statement, order )
+		
+		return ( nil == utf16 ) ? nil : String( utf16CodeUnits:UnsafePointer<UInt16>(utf16), count:Int(length)/sizeof(UInt16) )
 	}
 	
-	public func columnStringValue( column:Int ) -> NSString? {
+	public func columnStringObject( column:Int ) -> NSString? {
 		let order = Int32(column)
 		let utf8 = sqlite3_column_text( statement, order )
 		let length = sqlite3_column_bytes( statement, order )
@@ -629,7 +632,7 @@ public class Statement {
 		return ( nil == utf8 ) ? nil : NSString( bytes:utf8, length:Int(length), encoding:NSUTF8StringEncoding )
 	}
 	
-	public func columnDataValue( column:Int ) -> NSData? {
+	public func columnData( column:Int ) -> NSData? {
 		let order = Int32(column)
 		let blob = sqlite3_column_blob( statement, order )
 		let length = sqlite3_column_bytes( statement, order )
@@ -637,15 +640,13 @@ public class Statement {
 		return ( nil == blob || 0 == length ) ? nil : NSData(bytes: blob, length: Int(length))
 	}
 	
-	public func columnBinaryRepresentableValue<T>( column:Int ) -> [T]? {
-		guard isBinaryRepresentable( [T]().first ) else { return nil }
-		
+	public func columnArray<T where T:BinaryRepresentable>( column:Int ) -> [T] {
 		let order = Int32(column)
 		let blob = sqlite3_column_blob( statement, order )
 		let length = Int(sqlite3_column_bytes( statement, order ))
 		let size = sizeof(T)
 		
-		guard size > 0 && length > 0 && nil != blob && length % size == 0 else { return nil }
+		guard size > 0 && length > 0 && nil != blob else { return [T]() }
 		
 		return Array<T>( UnsafeBufferPointer<T>( start:UnsafePointer<T>(blob), count:length / size ) )
 	}
@@ -655,40 +656,42 @@ public class Statement {
 		
 		switch type {
 		case .Null: return .Null
-		case .Boolean: return .Boolean( columnBooleanValue( column ) )
-		case .Long: return .Long( columnLongValue( column ) )
-		case .Real: return .Real( columnDoubleValue( column ) )
-		case .Text: return .Text( columnStringValue( column, utf16:false ) ?? "" )
-		case .Data: return .Data( columnDataValue( column ) ?? NSData() )
+		case .Boolean: return .Boolean( columnBoolean( column ) )
+		case .Long: return .Long( columnLong( column ) )
+		case .Real: return .Real( columnDouble( column ) )
+		case .Text: return .Text( columnString( column ) ?? "" )
+		case .Data: return .Data( columnData( column ) ?? NSData() )
 		}
 	}
 	
 	public func columnValue<T>( column:Int ) -> T? {
-		if let _ = 0.0 as? T { return columnDoubleValue( column ) as? T }
-		else if let _ = 0 as? T { return columnIntegerValue( column ) as? T }
-		else if let _ = Int64(0) as? T { return columnLongValue( column ) as? T }
-		else if let _ = false as? T { return columnBooleanValue( column ) as? T }
-		else if let _ = "" as? T { return columnStringValue( column ) as? T }
-		else if let _ = NSData() as? T { return columnDataValue( column ) as? T }
+		if let _ = 0.0 as? T { return columnDouble( column ) as? T }
+		else if let _ = Int64(0) as? T { return columnLong( column ) as? T }
+		else if let _ = 0 as? T { return columnInteger( column ) as? T }
+		else if let _ = false as? T { return columnBoolean( column ) as? T }
+		else if let _ = "" as? T { return columnString( column ) as? T }
+		else if let _ = NSData() as? T { return columnData( column ) as? T }
 		else { return nil }
 	}
 	
-	public func columnObject( column:Int, pool:NSMutableSet, null:AnyObject ) -> AnyObject {
+	public func columnObject( column:Int, null:AnyObject, pool:NSMutableSet? = nil ) -> AnyObject {
 		var result:AnyObject
 		let type = columnType( column )
 		
 		switch ( type ) {
-		case .Boolean: result = columnBooleanValue( column )
-		case .Long: result = NSNumber( longLong:columnLongValue( column ) )
-		case .Real: result = columnDoubleValue( column )
-		case .Text: result = columnStringValue( column ) ?? null
-		case .Data: result = columnDataValue( column ) ?? null
+		case .Boolean: result = columnBoolean( column )
+		case .Long: result = NSNumber( longLong:columnLong( column ) )
+		case .Real: result = columnDouble( column )
+		case .Text: result = columnStringObject( column ) ?? null
+		case .Data: result = columnData( column ) ?? null
 		default: result = null
 		}
 		
 		if null !== result {
-			if let prior = pool.member( result ) { result = prior }
-			else { pool.addObject( result ) }
+			if let pool = pool {
+				if let prior = pool.member( result ) { result = prior }
+				else { pool.addObject( result ) }
+			}
 		}
 		
 		return result
@@ -696,10 +699,10 @@ public class Statement {
 	
 	//	MARK: Single Column Convenience
 	
-	public func oneColumn( inout values:[Int] ) throws { while try advance() { values.append( columnIntegerValue( 0 ) ) } }
-	public func oneColumn( inout values:[Double] ) throws { while try advance() { values.append( columnDoubleValue( 0 ) ) } }
-	public func oneColumn( inout values:[String], null:String = "" ) throws { while try advance() { values.append( columnStringValue( 0, utf16:false ) ?? null ) } }
-	public func oneColumn( inout values:[NSData], null:NSData = NSData() ) throws { while try advance() { values.append( columnDataValue( 0 ) ?? null ) } }
+	public func oneColumn( inout values:[Int] ) throws { while try advance() { values.append( columnInteger( 0 ) ) } }
+	public func oneColumn( inout values:[Double] ) throws { while try advance() { values.append( columnDouble( 0 ) ) } }
+	public func oneColumn( inout values:[String], null:String = "" ) throws { while try advance() { values.append( columnString( 0 ) ?? null ) } }
+	public func oneColumn( inout values:[NSData], null:NSData = NSData() ) throws { while try advance() { values.append( columnData( 0 ) ?? null ) } }
 	
 	//	MARK: Convenience
 	
@@ -711,7 +714,7 @@ public class Statement {
 		
 		while ( try advance() ) {
 			for ( index = 0 ; index < count ; ++index ) {
-				result[index].append( columnObject( index, pool:pool, null:null ) )
+				result[index].append( columnObject( index, null:null, pool:pool ) )
 			}
 		}
 		
@@ -769,12 +772,12 @@ public class Statement {
 		repeat {
 			for ( index = 0 ; index < count ; ++index ) {
 				switch types[index] {
-				case .Boolean: columns[index].queryAppend( columnBooleanValue( index ) )
-				case .Long: columns[index].queryAppend( columnLongValue( index ) )
-				case .Real: columns[index].queryAppend( columnDoubleValue( index ) )
-				case .Text: columns[index].queryAppend( columnStringValue( index ) ?? stringNull )
-				case .Data: columns[index].queryAppend( columnDataValue( index ) ?? dataNull )
-				case .Null: columns[index].queryAppend( columnObject( index, pool:pool, null:null ) )
+				case .Boolean: columns[index].queryAppend( columnBoolean( index ) )
+				case .Long: columns[index].queryAppend( columnLong( index ) )
+				case .Real: columns[index].queryAppend( columnDouble( index ) )
+				case .Text: columns[index].queryAppend( columnStringObject( index ) ?? stringNull )
+				case .Data: columns[index].queryAppend( columnData( index ) ?? dataNull )
+				case .Null: columns[index].queryAppend( columnObject( index, null:null, pool:pool ) )
 				}
 			}
 		} while try advance()
@@ -855,11 +858,11 @@ extension Statement : SequenceType, GeneratorType {
 }
 
 extension Statement : QueryRow {
-	public subscript( column:Int ) -> Bool { return columnBooleanValue( column ) }
-	public subscript( column:Int ) -> Int64 { return columnLongValue( column ) }
-	public subscript( column:Int ) -> Double { return columnDoubleValue( column ) }
-	public subscript( column:Int ) -> NSString? { return columnStringValue( column ) }
-	public subscript( column:Int ) -> NSData? { return columnDataValue( column ) }
+	public subscript( column:Int ) -> Bool { return columnBoolean( column ) }
+	public subscript( column:Int ) -> Int64 { return columnLong( column ) }
+	public subscript( column:Int ) -> Double { return columnDouble( column ) }
+	public subscript( column:Int ) -> String? { return columnString( column ) }
+	public subscript( column:Int ) -> NSData? { return columnData( column ) }
 }
 
 //	MARK: - Bindable Extensions
@@ -886,7 +889,6 @@ extension QueryValue {
 }
 
 func toVoid( memory:UnsafePointer<Void> ) -> UnsafePointer<Void> { return memory }
-public protocol BinaryRepresentable {}
 
 func isBinaryRepresentable<T>( it:T? = nil ) -> Bool {
 	if T.self is AnyObject { return false }
@@ -983,4 +985,15 @@ extension Set : QueryAppendable {
 private let SQLITE_BOOL:Int32 = 8
 private let SQLITE_STATIC = unsafeBitCast( intptr_t(0), sqlite3_destructor_type.self )
 private let SQLITE_TRANSIENT = unsafeBitCast( intptr_t(-1), sqlite3_destructor_type.self )
+
+/*
+import CoreGraphics
+
+extension CGFloat : Bindable, BinaryRepresentable { public var bindableValue:BindableValue { return .Real(Double(self)) } }
+extension CGSize : BinaryRepresentable {}
+extension CGPoint : BinaryRepresentable {}
+extension CGRect : BinaryRepresentable {}
+extension CGVector : BinaryRepresentable {}
+extension CGAffineTransform : BinaryRepresentable {}
+*/
 

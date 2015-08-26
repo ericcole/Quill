@@ -117,7 +117,7 @@ class QuillTests: XCTestCase {
 		struct RowData { let columnLong:Int64, columnString:String?, columnDouble:Double, columnBoolean:Bool }
 		
 		let rows = try! connection.select( "select * from \"\(table_name)\"", transform: { row -> RowData in
-			return RowData( columnLong:row.columnLongValue(0), columnString:row.columnStringValue(1) as? String, columnDouble:row.columnDoubleValue(2), columnBoolean:row.columnBooleanValue(3) )
+			return RowData( columnLong:row.columnLong(0), columnString:row.columnString(1), columnDouble:row.columnDouble(2), columnBoolean:row.columnBoolean(3) )
 		} )
 		let count = rows.count
 		let row0 = rows[0]
@@ -185,7 +185,7 @@ class QuillTests: XCTestCase {
 		
 		for row in query {
 			for var index = 0 ; index < row.columnCount ; ++index {
-				print( "row column \(index) value \(row.columnObject(index, pool:pool, null:null))" )
+				print( "row column \(index) value \(row.columnObject(index, null:null, pool:pool))" )
 			}
 		}
 		
@@ -253,8 +253,8 @@ class QuillTests: XCTestCase {
 	
 	func testNaturalCollationOrder() {
 		let table_name = "TEST_COLLATION_ORDER"
-		let insert = ["åbc123","ABC99","åbc77","abc88"]
-		let expect = ["ÅBC77","abc88","ABC99","åbc123"]
+		let insert = ["åbc123","ABC99","ABÇ77","abc88"]
+		let expect = ["ABÇ77","abc88","ABC99","åbc123"]
 		var actual = [String]()
 		
 		try! connection.execute( "create table " + table_name + " ( columnText text collate 'natural' not null default '' )" )
@@ -384,5 +384,24 @@ class QuillTests: XCTestCase {
 			XCTAssertEqual( zero.length, length )
 		default: XCTFail()
 		}
+	}
+	
+	func testReadme() {
+		try! connection.execute( "create table mytable ( column text )" )
+		try! connection.insert( "insert into mytable ( column ) values ( 'words' )" )
+		try! connection.update( "update mytable set column = 'words'" )
+		let values:[Int] = try! connection.select( "select count(*) from mytable", transform: { $0.columnInteger(0) } )
+		
+		print( "readme \(values)" )
+		
+		let query = try! connection.select( "select * from mytable" )
+		var array = [String]()
+		for row in query {
+			array.append( row[0]! )
+		}
+		
+		try! connection.insert( "insert into mytable ( column ) values ( ? )", "anything" )
+		try! connection.execute( "create table thetable ( anInt integer, aStr text, aReal real, aBool boolean, someData blob )" )
+		try! connection.insert( "insert into thetable ( anInt, aStr, aReal, aBool, someData ) values ( ?, ?, ?, ?, ? )", 5, "five", 5.5, false, "fiddy" )
 	}
 }

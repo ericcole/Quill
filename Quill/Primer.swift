@@ -157,7 +157,7 @@ extension Connection {
 	}
 	
 	///	http://sqlite.org/lang_attach.html
-	public static let LocationMemory = ":memory:"
+	public static let LocationMemory = "':memory:'"
 	public static let LocationTemporary = ""
 	func attachDatabase( name:String , location:String = LocationMemory ) throws -> Bool {
 		return try execute( "attach database " + location + " as " + name )
